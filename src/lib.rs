@@ -1,21 +1,79 @@
 #![allow(non_snake_case)]
 #![allow(clippy::too_many_arguments)]
 
+use log::info;
+use pyo3::exceptions::{KeyError, RuntimeError, TypeError};
+use pyo3::prelude::*;
+use pyo3::types::{IntoPyDict, PyDict, PyList, PyString, PyTuple};
+use pyo3::wrap_pyfunction;
 use std::convert::TryFrom;
 
+#[pymodule]
+fn radCAD(_py: Python, m: &PyModule) -> PyResult<()> {
+    pyo3_log::init();
 
+    info!("Initializing radCAD");
+
+    m.add_class::<Model>()?;
+    m.add_class::<Simulation>()?;
+    m.add_wrapped(wrap_pyfunction!(run))?;
+    m.add_wrapped(wrap_pyfunction!(single_run))?;
+    m.add_wrapped(wrap_pyfunction!(generate_parameter_sweep))?;
+    m.add_wrapped(wrap_pyfunction!(reduce_signals))?;
+
+    Ok(())
+}
+
+#[pyclass(subclass)]
+#[derive(Debug, Clone)]
 struct Model {
+    #[pyo3(get, set)]
     initial_state: PyObject,
+    #[pyo3(get, set)]
     state_update_blocks: PyObject,
+    #[pyo3(get, set)]
     params: PyObject,
 }
 
+#[pymethods]
+impl Model {
+    #[new]
+    fn new(initial_state: PyObject, state_update_blocks: PyObject, params: PyObject) -> Self {
+        info!("New Model created");
+        Model {
+            initial_state,
+            state_update_blocks,
+            params,
+        }
+    }
+}
+
+#[pyclass(subclass)]
+#[derive(Debug, Clone)]
 struct Simulation {
+    #[pyo3(get, set)]
     model: Model,
+    #[pyo3(get, set)]
     timesteps: usize,
+    #[pyo3(get, set)]
     runs: usize,
 }
 
+#[pymethods]
+impl Simulation {
+    #[new]
+    #[args(timesteps = "100", runs = "1")]
+    fn new(timesteps: usize, runs: usize, model: Model) -> Self {
+        info!("New Simulation created");
+        Simulation {
+            timesteps,
+            runs,
+            model,
+        }
+    }
+}
+
+#[pyfunction]
 fn run(simulations: &PyList) -> PyResult<PyObject> {
     let gil = Python::acquire_gil();
     let py = gil.python();
@@ -78,7 +136,9 @@ fn run(simulations: &PyList) -> PyResult<PyObject> {
     Ok(result.into())
 }
 
+#[pyfunction]
 fn single_run(
+    py: Python,
     simulation: usize,
     timesteps: usize,
     run: usize,
@@ -102,6 +162,7 @@ fn single_run(
     ) {
         Ok(result) => Ok((result.to_object(py), None)),
         Err(error) => {
+            info!("Simulation {simulation} / run {run} / subset {subset} failed! Returning partial results.", simulation=simulation, subset=subset, run=run);
             println!("Simulation {simulation} / run {run} / subset {subset} failed! Returning partial results.", simulation=simulation, subset=subset, run=run);
             Ok((result.to_object(py), Some(error.to_object(py))))
         }
@@ -276,7 +337,8 @@ fn _single_run(
     Ok(result.into())
 }
 
-fn generate_parameter_sweep(params: &PyDict) -> PyResult<PyObject> {
+#[pyfunction]
+fn generate_parameter_sweep(py: Python, params: &PyDict) -> PyResult<PyObject> {
     let param_sweep = PyList::empty(py);
     let mut max_len = 0;
 
@@ -302,7 +364,9 @@ fn generate_parameter_sweep(params: &PyDict) -> PyResult<PyObject> {
     Ok(param_sweep.into())
 }
 
+#[pyfunction]
 fn reduce_signals(
+    py: Python,
     params: &PyDict,
     substep: usize,
     result: &PyList,
